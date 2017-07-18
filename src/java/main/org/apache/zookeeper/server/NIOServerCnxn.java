@@ -453,6 +453,14 @@ public class NIOServerCnxn extends ServerCnxn {
             }
         }
     }
+
+    public InetAddress getSocketAddress() {
+        if (sock == null) {
+            return null;
+        }
+
+        return sock.socket().getInetAddress();
+    }
     
     /**
      * This class wraps the sendBuffer method of NIOServerCnxn. It is
@@ -1000,37 +1008,26 @@ public class NIOServerCnxn extends ServerCnxn {
      */
     @Override
     public void close() {
-        synchronized(factory.cnxns){
-            // if this is not in cnxns then it's already closed
-            if (!factory.cnxns.remove(this)) {
-                return;
-            }
+        if (!factory.removeCnxn(this)) {
+            return;
+        }
 
-            synchronized (factory.ipMap) {
-                Set<NIOServerCnxn> s =
-                    factory.ipMap.get(sock.socket().getInetAddress());
-                s.remove(this);
-            }
+        if (zkServer != null) {
+            zkServer.removeCnxn(this);
+        }
 
-            factory.unregisterConnection(this);
-
-            if (zkServer != null) {
-                zkServer.removeCnxn(this);
-            }
-    
-            closeSock();
-    
-            if (sk != null) {
-                try {
-                    // need to cancel this selection key from the selector
-                    sk.cancel();
-                } catch (Exception e) {
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("ignoring exception during selectionkey cancel", e);
-                    }
+        if (sk != null) {
+            try {
+                // need to cancel this selection key from the selector
+                sk.cancel();
+            } catch (Exception e) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("ignoring exception during selectionkey cancel", e);
                 }
             }
         }
+
+        closeSock();
     }
 
     /**
@@ -1168,6 +1165,7 @@ public class NIOServerCnxn extends ServerCnxn {
     @Override
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
+        this.factory.addSession(sessionId, this);
     }
 
     @Override

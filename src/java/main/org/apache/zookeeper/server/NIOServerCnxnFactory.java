@@ -31,6 +31,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
     */
     final ByteBuffer directBuffer = ByteBuffer.allocateDirect(64 * 1024);
 
+    // sessionMap is used by closeSession()
+    private final ConcurrentHashMap<Long, NIOServerCnxn> sessionMap =
+            new ConcurrentHashMap<Long, NIOServerCnxn>();
     final HashMap<InetAddress, Set<NIOServerCnxn>> ipMap =
         new HashMap<InetAddress, Set<NIOServerCnxn>>( );
 
@@ -268,28 +272,46 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
     }
 
     @Override
-    public synchronized void closeSession(long sessionId) {
-        selector.wakeup();
-        closeSessionWithoutWakeup(sessionId);
+    public void closeSession(long sessionId) {
+        NIOServerCnxn cnxn = sessionMap.remove(sessionId);
+        if (cnxn != null) {
+            cnxn.close();
+        }
     }
 
-    @SuppressWarnings("unchecked")
-    private void closeSessionWithoutWakeup(long sessionId) {
-        HashSet<NIOServerCnxn> cnxns;
-        synchronized (this.cnxns) {
-            cnxns = (HashSet<NIOServerCnxn>)this.cnxns.clone();
+    public void addSession(long sessionId, NIOServerCnxn cnxn) {
+        sessionMap.put(sessionId, cnxn);
+    }
+
+    /**
+     * De-registers the connection from the various mappings maintained
+     * by the factory.
+     */
+    public boolean removeCnxn(NIOServerCnxn cnxn) {
+        // If the connection is not in the master list it's already been closed
+        if (!cnxns.remove(cnxn)) {
+            return false;
         }
 
-        for (NIOServerCnxn cnxn : cnxns) {
-            if (cnxn.getSessionId() == sessionId) {
-                try {
-                    cnxn.close();
-                } catch (Exception e) {
-                    LOG.warn("exception during session close", e);
-                }
-                break;
+        long sessionId = cnxn.getSessionId();
+        if (sessionId != 0) {
+            sessionMap.remove(sessionId);
+        }
+
+        InetAddress addr = cnxn.getSocketAddress();
+        if (addr != null) {
+            Set<NIOServerCnxn> set = ipMap.get(addr);
+            if (set != null) {
+                set.remove(cnxn);
+                // Note that we make no effort here to remove empty mappings
+                // from ipMap.
             }
         }
+
+        // unregister from JMX
+        unregisterConnection(cnxn);
+
+        return true;
     }
 
     @Override
