@@ -28,6 +28,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
@@ -61,6 +62,10 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
      * only allocate it once.
     */
     final ByteBuffer directBuffer = ByteBuffer.allocateDirect(64 * 1024);
+
+    // sessionMap is used to accelerate closeSession()
+    private final ConcurrentHashMap<Long, NIOServerCnxn> sessionMap =
+            new ConcurrentHashMap<Long, NIOServerCnxn>();
 
     final HashMap<InetAddress, Set<NIOServerCnxn>> ipMap =
         new HashMap<InetAddress, Set<NIOServerCnxn>>( );
@@ -151,9 +156,36 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
         }
     }
 
+    public void removeCnxn(NIOServerCnxn cnxn) {
+        synchronized(cnxns) {
+            // Remove the related session from the sessionMap.
+            long sessionId = cnxn.getSessionId();
+            if (sessionId != 0) {
+                sessionMap.remove(sessionId);
+            }
+
+            // if this is not in cnxns then it's already closed
+            if (!cnxns.remove(cnxn)) {
+                return;
+            }
+
+            synchronized (ipMap) {
+                Set<NIOServerCnxn> s =
+                        ipMap.get(cnxn.getSocketAddress());
+                s.remove(cnxn);
+            }
+
+            unregisterConnection(cnxn);
+        }
+    }
+
     protected NIOServerCnxn createConnection(SocketChannel sock,
             SelectionKey sk) throws IOException {
         return new NIOServerCnxn(zkServer, sock, sk, this);
+    }
+
+    public void addSession(long sessionId, NIOServerCnxn cnxn) {
+        sessionMap.put(sessionId, cnxn);
     }
 
     private int getClientCnxnCount(InetAddress cl) {
@@ -275,20 +307,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
 
     @SuppressWarnings("unchecked")
     private void closeSessionWithoutWakeup(long sessionId) {
-        HashSet<NIOServerCnxn> cnxns;
-        synchronized (this.cnxns) {
-            cnxns = (HashSet<NIOServerCnxn>)this.cnxns.clone();
-        }
-
-        for (NIOServerCnxn cnxn : cnxns) {
-            if (cnxn.getSessionId() == sessionId) {
-                try {
-                    cnxn.close();
-                } catch (Exception e) {
-                    LOG.warn("exception during session close", e);
-                }
-                break;
-            }
+        NIOServerCnxn cnxn = sessionMap.remove(sessionId);
+        if (cnxn != null) {
+            cnxn.close();
         }
     }
 

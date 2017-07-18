@@ -223,6 +223,17 @@ public class NIOServerCnxn extends ServerCnxn {
     }
 
     /**
+     * Wrapper method to return the cnxn socket address
+     */
+    public InetAddress getSocketAddress() {
+        if (sock == null) {
+            return null;
+        }
+
+        return sock.socket().getInetAddress();
+    }
+
+    /**
      * Handles read/write IO on connection.
      */
     void doIO(SelectionKey k) throws InterruptedException {
@@ -1001,25 +1012,14 @@ public class NIOServerCnxn extends ServerCnxn {
     @Override
     public void close() {
         synchronized(factory.cnxns){
-            // if this is not in cnxns then it's already closed
-            if (!factory.cnxns.remove(this)) {
-                return;
-            }
-
-            synchronized (factory.ipMap) {
-                Set<NIOServerCnxn> s =
-                    factory.ipMap.get(sock.socket().getInetAddress());
-                s.remove(this);
-            }
-
-            factory.unregisterConnection(this);
+            factory.removeCnxn(this);
 
             if (zkServer != null) {
                 zkServer.removeCnxn(this);
             }
-    
+
             closeSock();
-    
+
             if (sk != null) {
                 try {
                     // need to cancel this selection key from the selector
@@ -1168,6 +1168,7 @@ public class NIOServerCnxn extends ServerCnxn {
     @Override
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
+        this.factory.addSession(sessionId, this);
     }
 
     @Override
