@@ -464,7 +464,7 @@ public class NIOServerCnxn extends ServerCnxn {
             }
         }
     }
-    
+
     /**
      * This class wraps the sendBuffer method of NIOServerCnxn. It is
      * responsible for chunking up the response to a client. Rather
