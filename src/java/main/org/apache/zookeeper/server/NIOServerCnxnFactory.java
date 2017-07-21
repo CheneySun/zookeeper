@@ -28,7 +28,6 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
@@ -62,10 +61,6 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
      * only allocate it once.
     */
     final ByteBuffer directBuffer = ByteBuffer.allocateDirect(64 * 1024);
-
-    // sessionMap is used to accelerate closeSession()
-    private final ConcurrentHashMap<Long, NIOServerCnxn> sessionMap =
-            new ConcurrentHashMap<Long, NIOServerCnxn>();
 
     final HashMap<InetAddress, Set<NIOServerCnxn>> ipMap =
         new HashMap<InetAddress, Set<NIOServerCnxn>>( );
@@ -182,10 +177,6 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
     protected NIOServerCnxn createConnection(SocketChannel sock,
             SelectionKey sk) throws IOException {
         return new NIOServerCnxn(zkServer, sock, sk, this);
-    }
-
-    public void addSession(long sessionId, NIOServerCnxn cnxn) {
-        sessionMap.put(sessionId, cnxn);
     }
 
     private int getClientCnxnCount(InetAddress cl) {
@@ -307,9 +298,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory implements Runnable 
 
     @SuppressWarnings("unchecked")
     private void closeSessionWithoutWakeup(long sessionId) {
-        NIOServerCnxn cnxn = sessionMap.remove(sessionId);
+        NIOServerCnxn cnxn = (NIOServerCnxn) sessionMap.remove(sessionId);
         if (cnxn != null) {
-            cnxn.close();
+            try {
+                cnxn.close();
+            } catch (Exception e) {
+                LOG.warn("exception during session close", e);
+            }
         }
     }
 

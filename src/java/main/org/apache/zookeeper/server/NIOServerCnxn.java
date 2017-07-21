@@ -222,9 +222,7 @@ public class NIOServerCnxn extends ServerCnxn {
         return sock.isOpen();
     }
 
-    /**
-     * Wrapper method to return the cnxn socket address
-     */
+    @Override
     public InetAddress getSocketAddress() {
         if (sock == null) {
             return null;
@@ -464,7 +462,7 @@ public class NIOServerCnxn extends ServerCnxn {
             }
         }
     }
-    
+
     /**
      * This class wraps the sendBuffer method of NIOServerCnxn. It is
      * responsible for chunking up the response to a client. Rather
